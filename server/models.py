@@ -3,8 +3,9 @@ from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy_serializer import SerializerMixin
 from sqlalchemy import event, CheckConstraint
 from werkzeug.exceptions import BadRequest
-from extensions import db
 import re
+
+db = SQLAlchemy()
 
 
 # Association table
@@ -21,7 +22,7 @@ class Product(db.Model, SerializerMixin):
         CheckConstraint('price > 0', name='check_price_positive'),
     )
     
-    serialize_rules = ('-categories.products', '-cart_items.product', '-wishlist_items.product')
+    serialize_rules = ('-cart_items.product', '-wishlist_items.product')
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -70,7 +71,7 @@ class Product(db.Model, SerializerMixin):
     def __repr__(self):
         return f'<Product {self.name}>'
 
-class Category(db.Model):
+class Category(db.Model,SerializerMixin):
     __tablename__ = 'categories'
 
     serialize_rules = ('-products.categories',)

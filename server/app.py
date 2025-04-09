@@ -1,276 +1,191 @@
-from flask import Flask, request, jsonify
-from flask_restful import Resource
-from extensions import db, api, cors, migrate
-import os
-from werkzeug.exceptions import BadRequest, NotFound
-from sqlalchemy.exc import IntegrityError
-from models import Product, Category, CartItem, WishlistItem
+from flask import Flask,make_response,jsonify,request
+from models import db, Product, Category, CartItem, WishlistItem
+from flask_migrate import Migrate
+from flask_restful import Api,Resource
+from flask_cors import CORS
+from werkzeug.exceptions import NotFound, InternalServerError,BadRequest
 
-def create_app():
-    app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ecommerce.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
-    # Initialize extensions with app
-    cors.init_app(app)
-    db.init_app(app)
-    migrate.init_app(app, db)
-    api.init_app(app)
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///electronics.db'   
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.json.compact = False
+db.init_app(app)
+api = Api(app)
+migrate = Migrate(app, db)
+cors= CORS(app)
 
-    
-    return app
-
-app = create_app()
-
-
+# Product resource for all and one product
 class ProductResource(Resource):
-    def get(self, product_id=None):
+    def get(self, id=None):
         try:
-            if product_id:
-                product = Product.query.get_or_404(product_id)
-                return product.to_dict()
-            return [p.to_dict() for p in Product.query.all()]
-        except NotFound:
-            return {'error': 'Product not found'}, 404
+            if id:
+                # Getting single product
+                product = Product.query.get(id)
+                if not product:
+                    raise NotFound("Product not found")
+                return make_response(product.to_dict(rules = ('-cart_items','-wishlist_items','categories')), 200)
+            else:
+                # Getting all products
+                products = Product.query.all()
+                return make_response([product.to_dict(rules = ('-cart_items','-wishlist_items','categories')) for product in products], 200)
+                
+        except NotFound as e:
+            return make_response({"error": str(e)}, 404)
         except Exception as e:
-            return {'error': str(e)}, 500
+            return make_response({"error": "Internal server error"}, 500)
 
-    def post(self):
-        try:
-            data = request.get_json()
-            product = Product(**data)
-            db.session.add(product)
-            db.session.commit()
-            return product.to_dict(), 201
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except IntegrityError:
-            return {'error': 'Product already exists'}, 409
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
-    def put(self, product_id):
-        try:
-            product = Product.query.get_or_404(product_id)
-            data = request.get_json()
-            for key, value in data.items():
-                setattr(product, key, value)
-            db.session.commit()
-            return product.to_dict()
-        except NotFound:
-            return {'error': 'Product not found'}, 404
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
-    def delete(self, product_id):
-        try:
-            product = Product.query.get_or_404(product_id)
-            db.session.delete(product)
-            db.session.commit()
-            return '', 204
-        except NotFound:
-            return {'error': 'Product not found'}, 404
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
+api.add_resource(ProductResource, '/products','/products/<int:id>')
+    
+# category resource for both all and one category
 class CategoryResource(Resource):
     def get(self, category_id=None):
         try:
             if category_id:
                 category = Category.query.get_or_404(category_id)
-                return category.to_dict()
-            return [c.to_dict() for c in Category.query.all()]
+                return make_response(category.to_dict(rules = ('-products.cart_items','products.wishlist_items',)),200)
+            return make_response([category.to_dict(rules = ('-products.cart_items','products.wishlist_items',)) for category in Category.query.all()])
         except NotFound:
             return {'error': 'Category not found'}, 404
         except Exception as e:
             return {'error': str(e)}, 500
-
-    def post(self):
-        try:
-            data = request.get_json()
-            category = Category(**data)
-            db.session.add(category)
-            db.session.commit()
-            return category.to_dict(), 201
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except IntegrityError:
-            return {'error': 'Category already exists'}, 409
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
-    def put(self, category_id):
-        try:
-            category = Category.query.get_or_404(category_id)
-            data = request.get_json()
-            for key, value in data.items():
-                setattr(category, key, value)
-            db.session.commit()
-            return category.to_dict()
-        except NotFound:
-            return {'error': 'Category not found'}, 404
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
-    def delete(self, category_id):
-        try:
-            category = Category.query.get_or_404(category_id)
-            db.session.delete(category)
-            db.session.commit()
-            return '', 204
-        except NotFound:
-            return {'error': 'Category not found'}, 404
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
+api.add_resource(CategoryResource, '/categories','/categories/<int:category_id>')
 
 class CartItemResource(Resource):
-    def get(self, cart_item_id=None):
+    # GET: List all cart items 
+    def get(self):
         try:
-            if cart_item_id:
-                item = CartItem.query.get_or_404(cart_item_id)
-                return item.to_dict()
-            return [i.to_dict() for i in CartItem.query.all()]
-        except NotFound:
-            return {'error': 'Cart item not found'}, 404
+            cart_items = CartItem.query.all()  
+            return jsonify([item.to_dict() for item in cart_items])
         except Exception as e:
             return {'error': str(e)}, 500
 
+    #Adding a new item to cart
     def post(self):
         try:
             data = request.get_json()
-            item = CartItem(**data)
-            db.session.add(item)
+            product_id = data.get('product_id')
+            quantity = data.get('quantity', 1)
+
+            if not product_id:
+                return {'error': 'Product ID is required'}, 400
+            
+            product = Product.query.get_or_404(product_id)
+
+        
+            cart_item = CartItem.query.filter_by(product_id=product_id).first()
+            if cart_item:
+                cart_item.quantity += quantity
+            else:
+                cart_item = CartItem(product_id=product_id, quantity=quantity)
+                db.session.add(cart_item)
+
             db.session.commit()
-            return item.to_dict(), 201
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except IntegrityError:
-            return {'error': 'Invalid product reference'}, 400
+            return jsonify(cart_item.to_dict()), 201
+
+        except NotFound:
+            return {'error': 'Product not found'}, 404
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
 
-    def put(self, cart_item_id):
+
+api.add_resource(CartItemResource, '/cart')
+
+class CartItemResourceByID(Resource):
+    def get(self, item_id):
         try:
-            item = CartItem.query.get_or_404(cart_item_id)
+            cart_item = CartItem.query.get_or_404(item_id)
+            return jsonify(cart_item.to_dict())
+        except Exception as e:
+            return {'error': str(e)}, 500
+        
+    def patch(self, item_id):
+        try:
             data = request.get_json()
-            for key, value in data.items():
-                setattr(item, key, value)
+            quantity = data.get('quantity')
+
+            if not quantity or quantity < 1:
+                return {'error': 'Valid quantity is required'}, 400
+
+            cart_item = CartItem.query.get_or_404(item_id)
+            cart_item.quantity = quantity
             db.session.commit()
-            return item.to_dict()
+            return jsonify(cart_item.to_dict())
+
         except NotFound:
             return {'error': 'Cart item not found'}, 404
-        except BadRequest as e:
-            return {'error': str(e)}, 400
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
 
-    def delete(self, cart_item_id):
+    def delete(self, item_id):
         try:
-            item = CartItem.query.get_or_404(cart_item_id)
-            db.session.delete(item)
+            cart_item = CartItem.query.get_or_404(item_id)
+            db.session.delete(cart_item)
             db.session.commit()
-            return '', 204
+            return {'message': 'Item removed from cart'}, 200
+
         except NotFound:
             return {'error': 'Cart item not found'}, 404
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
+
+api.add_resource(CartItemResourceByID, '/cart/<int:item_id>')
+
+class WishlistResource(Resource):
+    # Get all wishlist items
+    def get(self):
+        try:
+            wishlist_items = WishlistItem.query.all()  # Add user_id filter if needed
+            return jsonify([item.to_dict() for item in wishlist_items])
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+    # Add product to wishlist
+    def post(self):
+        try:
+            data = request.get_json()
+            product_id = data.get('product_id')
+
+            if not product_id:
+                return {'error': 'Product ID is required'}, 400
+            
+            Product.query.get_or_404(product_id)
+
+            existing = WishlistItem.query.filter_by(product_id=product_id).first()
+            if existing:
+                return {'error': 'Product already in wishlist'}, 409
+
+            new_item = WishlistItem(product_id=product_id)
+            db.session.add(new_item)
+            db.session.commit()
+            return jsonify(new_item.to_dict()), 201
+
+        except NotFound:
+            return {'error': 'Product not found'}, 404
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+        
+api.add_resource(WishlistResource, '/wishlist')
 
 class WishlistItemResource(Resource):
-    def get(self, wishlist_item_id=None):
+    # Remove from wishlist
+    def delete(self, item_id):
         try:
-            if wishlist_item_id:
-                item = WishlistItem.query.get_or_404(wishlist_item_id)
-                return item.to_dict()
-            return [i.to_dict() for i in WishlistItem.query.all()]
-        except NotFound:
-            return {'error': 'Wishlist item not found'}, 404
-        except Exception as e:
-            return {'error': str(e)}, 500
-
-    def post(self):
-        try:
-            data = request.get_json()
-            item = WishlistItem(**data)
-            db.session.add(item)
-            db.session.commit()
-            return item.to_dict(), 201
-        except BadRequest as e:
-            return {'error': str(e)}, 400
-        except IntegrityError:
-            return {'error': 'Invalid product reference'}, 400
-        except Exception as e:
-            db.session.rollback()
-            return {'error': str(e)}, 500
-
-    def delete(self, wishlist_item_id):
-        try:
-            item = WishlistItem.query.get_or_404(wishlist_item_id)
+            item = WishlistItem.query.get_or_404(item_id)
             db.session.delete(item)
             db.session.commit()
-            return '', 204
+            return {'message': 'Item removed from wishlist'}, 200
         except NotFound:
             return {'error': 'Wishlist item not found'}, 404
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
 
-# Register all resources with their routes
-api.add_resource(ProductResource, 
-    '/api/products', 
-    '/api/products/<int:product_id>'
-)
-api.add_resource(CategoryResource, 
-    '/api/categories', 
-    '/api/categories/<int:category_id>'
-)
-api.add_resource(CartItemResource, 
-    '/api/cart', 
-    '/api/cart/<int:cart_item_id>'
-)
-api.add_resource(WishlistItemResource, 
-    '/api/wishlist', 
-    '/api/wishlist/<int:wishlist_item_id>'
-)
 
-@app.route('/')
-def health_check():
-    return {
-        'status': 'healthy',
-        'routes': {
-            'products': '/api/products',
-            'categories': '/api/categories',
-            'cart': '/api/cart', 
-            'wishlist': '/api/wishlist'
-        }
-    }
-
-# Error handlers
-@app.errorhandler(400)
-def handle_bad_request(e):
-    return {'error': str(e)}, 400
-
-@app.errorhandler(404)
-def handle_not_found(e):
-    return {'error': 'Resource not found'}, 404
-
-@app.errorhandler(500)
-def handle_server_error(e):
-    return {'error': 'Internal server error'}, 500
+api.add_resource(WishlistItemResource, '/wishlist/items/<int:item_id>')
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(port=5555, debug=True)
+    app.run(debug=True,port=5555)
