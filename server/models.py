@@ -70,18 +70,15 @@ class Product(db.Model, SerializerMixin):
     def __repr__(self):
         return f'<Product {self.name}>'
 
-class Category(db.Model, SerializerMixin):
+class Category(db.Model):
     __tablename__ = 'categories'
-    __table_args__ = (
-        CheckConstraint("slug ~ '^[a-z0-9-]+$'", name='check_slug_format'),
-    )
-    
+
     serialize_rules = ('-products.categories',)
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), unique=True, nullable=False)
     slug = db.Column(db.String(50), unique=True, nullable=False)
-    
+
     products = db.relationship(
         'Product',
         secondary=product_category,
